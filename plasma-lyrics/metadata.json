@@ -1,0 +1,26 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "developer@gomusic.com",
+                "Name": "GoMusic Team"
+            }
+        ],
+        "Category": "Multimedia",
+        "Description": "Show lyrics for GoMusic player via SSE connection",
+        "Description[zh_CN]": "通过SSE连接显示GoMusic播放器歌词",
+        "EnabledByDefault": true,
+        "Icon": "media-playback-start",
+        "Id": "org.kde.plasma.gomusic-lyrics",
+        "License": "GPL-3.0",
+        "Name": "wmPlayer Music Lyrics",
+        "Name[zh_CN]": "wmPlayer Music 歌词",
+        "ServiceTypes": [
+            "Plasma/Applet"
+        ],
+        "Version": "2.0",
+        "Website": "https://github.com/gomusic/plasma-lyrics"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}
