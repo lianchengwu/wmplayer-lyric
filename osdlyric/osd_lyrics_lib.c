@@ -1029,35 +1029,146 @@ gboolean osd_lyrics_init_with_sse(const gchar *sse_url) {
 
 // 设置歌词文本
 void osd_lyrics_set_text(const gchar *lyrics) {
-    if (osd && osd->label && osd->initialized && lyrics) {
-        // 额外检查确保 label 是有效的 GTK Label 对象
-        if (GTK_IS_LABEL(osd->label)) {
-            if (osd->current_lyrics) {
-                g_free(osd->current_lyrics);
-            }
-            osd->current_lyrics = g_strdup(lyrics);
-            gtk_label_set_text(GTK_LABEL(osd->label), lyrics);
-        } else {
-            g_warning("osd->label 不是有效的 GTK Label 对象");
-        }
+    if (!osd || !osd->label || !osd->initialized || !lyrics) {
+        return;
     }
+
+    // 检查是否在主线程中
+    if (!g_main_context_is_owner(g_main_context_default())) {
+        g_warning("osd_lyrics_set_text 必须在主线程中调用");
+        return;
+    }
+
+    // 额外检查确保 label 是有效的 GTK Label 对象
+    if (!GTK_IS_LABEL(osd->label)) {
+        g_warning("osd->label 不是有效的 GTK Label 对象");
+        return;
+    }
+
+    // 检查 label 是否已经被销毁
+    if (!gtk_widget_get_realized(osd->label) && !gtk_widget_get_visible(osd->label)) {
+        g_warning("GTK Label 对象可能已被销毁");
+        return;
+    }
+
+    // 安全地更新文本
+    if (osd->current_lyrics) {
+        g_free(osd->current_lyrics);
+    }
+    osd->current_lyrics = g_strdup(lyrics);
+
+    // 使用 try-catch 机制保护 GTK 调用
+    gtk_label_set_text(GTK_LABEL(osd->label), lyrics);
 }
 
 // 设置带Pango标记的歌词文本（用于渐进式颜色效果）
 void osd_lyrics_set_markup_text(const gchar *markup) {
-    if (osd && osd->label && osd->initialized && markup) {
-        // 额外检查确保 label 是有效的 GTK Label 对象
-        if (GTK_IS_LABEL(osd->label)) {
-            if (osd->current_lyrics) {
-                g_free(osd->current_lyrics);
-            }
-            osd->current_lyrics = g_strdup(markup);
-            gtk_label_set_markup(GTK_LABEL(osd->label), markup);
+    if (!osd || !osd->label || !osd->initialized || !markup) {
+        return;
+    }
+
+    // 检查是否在主线程中
+    if (!g_main_context_is_owner(g_main_context_default())) {
+        g_warning("osd_lyrics_set_markup_text 必须在主线程中调用");
+        return;
+    }
+
+    // 额外检查确保 label 是有效的 GTK Label 对象
+    if (!GTK_IS_LABEL(osd->label)) {
+        g_warning("osd->label 不是有效的 GTK Label 对象");
+        // 降级为普通文本显示，但需要去除标记
+        gchar *plain_text = g_markup_escape_text(markup, -1);
+        osd_lyrics_set_text(plain_text);
+        g_free(plain_text);
+        return;
+    }
+
+    // 检查 label 是否已经被销毁
+    if (!gtk_widget_get_realized(osd->label) && !gtk_widget_get_visible(osd->label)) {
+        g_warning("GTK Label 对象可能已被销毁");
+        return;
+    }
+
+    // 验证 markup 格式是否有效
+    GError *error = NULL;
+    if (!pango_parse_markup(markup, -1, 0, NULL, NULL, NULL, &error)) {
+        g_warning("无效的 Pango 标记: %s", error ? error->message : "未知错误");
+        if (error) g_error_free(error);
+        // 降级为普通文本显示
+        gchar *plain_text = g_markup_escape_text(markup, -1);
+        osd_lyrics_set_text(plain_text);
+        g_free(plain_text);
+        return;
+    }
+
+    // 安全地更新标记文本
+    if (osd->current_lyrics) {
+        g_free(osd->current_lyrics);
+    }
+    osd->current_lyrics = g_strdup(markup);
+
+    // 使用 try-catch 机制保护 GTK 调用
+    gtk_label_set_markup(GTK_LABEL(osd->label), markup);
+}
+
+// 线程安全的文本更新结构
+typedef struct {
+    gchar *text;
+    gboolean is_markup;
+} ThreadSafeTextUpdate;
+
+// 主线程中执行文本更新的回调函数
+static gboolean update_text_in_main_thread(gpointer data) {
+    ThreadSafeTextUpdate *update = (ThreadSafeTextUpdate *)data;
+
+    if (update) {
+        if (update->is_markup) {
+            osd_lyrics_set_markup_text(update->text);
         } else {
-            g_warning("osd->label 不是有效的 GTK Label 对象");
-            // 降级为普通文本显示
-            osd_lyrics_set_text(markup);
+            osd_lyrics_set_text(update->text);
         }
+
+        // 清理资源
+        if (update->text) {
+            g_free(update->text);
+        }
+        g_free(update);
+    }
+
+    return G_SOURCE_REMOVE; // 只执行一次
+}
+
+// 线程安全的文本设置函数
+void osd_lyrics_set_text_safe(const gchar *lyrics) {
+    if (!lyrics) return;
+
+    if (g_main_context_is_owner(g_main_context_default())) {
+        // 已经在主线程中，直接调用
+        osd_lyrics_set_text(lyrics);
+    } else {
+        // 在其他线程中，调度到主线程执行
+        ThreadSafeTextUpdate *update = g_malloc0(sizeof(ThreadSafeTextUpdate));
+        update->text = g_strdup(lyrics);
+        update->is_markup = FALSE;
+
+        gdk_threads_add_idle(update_text_in_main_thread, update);
+    }
+}
+
+// 线程安全的标记文本设置函数
+void osd_lyrics_set_markup_text_safe(const gchar *markup) {
+    if (!markup) return;
+
+    if (g_main_context_is_owner(g_main_context_default())) {
+        // 已经在主线程中，直接调用
+        osd_lyrics_set_markup_text(markup);
+    } else {
+        // 在其他线程中，调度到主线程执行
+        ThreadSafeTextUpdate *update = g_malloc0(sizeof(ThreadSafeTextUpdate));
+        update->text = g_strdup(markup);
+        update->is_markup = TRUE;
+
+        gdk_threads_add_idle(update_text_in_main_thread, update);
     }
 }
 
@@ -1185,11 +1296,24 @@ static size_t sse_write_callback(void *contents, size_t size, size_t nmemb, void
     size_t realsize = size * nmemb;
     SSEData *sse_data = (SSEData *)userp;
 
-    // 重新分配缓冲区
-    sse_data->buffer = g_realloc(sse_data->buffer, sse_data->buffer_size + realsize + 1);
-    if (sse_data->buffer == NULL) {
+    // 检查输入参数有效性
+    if (!sse_data || !contents || realsize == 0) {
         return 0;
     }
+
+    // 检查OSD对象是否仍然有效
+    if (!sse_data->osd || !sse_data->osd->initialized) {
+        printf("⚠️ [SSE回调] OSD对象已失效，停止处理数据\n");
+        return 0;
+    }
+
+    // 重新分配缓冲区，添加错误检查
+    gchar *new_buffer = g_realloc(sse_data->buffer, sse_data->buffer_size + realsize + 1);
+    if (new_buffer == NULL) {
+        g_warning("SSE缓冲区内存分配失败");
+        return 0;
+    }
+    sse_data->buffer = new_buffer;
 
     // 复制数据到缓冲区
     memcpy(&(sse_data->buffer[sse_data->buffer_size]), contents, realsize);
@@ -1284,7 +1408,7 @@ static gboolean update_krc_lyrics_from_sse(gpointer data) {
         } else {
             // 纯文本
             printf("📝 [OSD歌词] 纯文本模式: %s\n", lyrics_text);
-            osd_lyrics_set_text(lyrics_text);
+            osd_lyrics_set_text_safe(lyrics_text);
         }
 
         g_free(lyrics_text);
@@ -1306,12 +1430,23 @@ static void start_sse_connection(OSDLyrics *osd) {
 static gpointer sse_connection_thread(gpointer data) {
     OSDLyrics *osd = (OSDLyrics *)data;
 
+    if (!osd) {
+        printf("❌ [SSE线程] OSD对象为空，线程退出\n");
+        return NULL;
+    }
+
     printf("🔗 [OSD歌词] 开始SSE连接线程\n");
 
     while (osd && osd->initialized) {
         CURL *curl;
         CURLcode res;
         SSEData sse_data = {0};
+
+        // 再次检查OSD对象有效性
+        if (!osd || !osd->initialized) {
+            printf("⚠️ [SSE线程] OSD对象已失效，退出连接循环\n");
+            break;
+        }
 
         sse_data.osd = osd;
         sse_data.buffer = NULL;
@@ -1327,6 +1462,8 @@ static gpointer sse_connection_thread(gpointer data) {
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L); // 无超时
             curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L); // 连接超时10秒
+            // 添加信号处理，允许中断长时间连接
+            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
             // 设置SSE头部
             struct curl_slist *headers = NULL;
@@ -1346,14 +1483,19 @@ static gpointer sse_connection_thread(gpointer data) {
             curl_easy_cleanup(curl);
         }
 
+        // 安全清理缓冲区
         if (sse_data.buffer) {
             g_free(sse_data.buffer);
+            sse_data.buffer = NULL;
         }
 
-        // 如果程序还在运行，等待3秒后重连
+        // 检查程序是否还在运行，如果是则等待后重连
         if (osd && osd->initialized) {
             printf("⏰ [OSD歌词] 3秒后重连...\n");
-            g_usleep(3 * G_USEC_PER_SEC); // 等待3秒
+            // 使用更短的睡眠间隔，以便更快响应程序退出
+            for (int i = 0; i < 30 && osd && osd->initialized; i++) {
+                g_usleep(100 * 1000); // 100ms * 30 = 3秒
+            }
         }
     }
 
@@ -1599,15 +1741,19 @@ static void load_config(OSDLyrics *osd) {
 
 // 清理KRC渐进式播放状态
 static void clear_krc_state(void) {
-    if (krc_progress_state.timer_id > 0) {
-        g_source_remove(krc_progress_state.timer_id);
-        krc_progress_state.timer_id = 0;
-        printf("🔄 [KRC清理] 已停止KRC渐进式播放定时器\n");
-    }
+    printf("🔄 [KRC清理] 开始清理KRC状态\n");
 
-    if (krc_progress_state.is_active) {
-        krc_progress_state.is_active = FALSE;
-        printf("🔄 [KRC清理] 已清理KRC活动状态\n");
+    // 先标记为非活动状态，防止定时器回调继续执行
+    krc_progress_state.is_active = FALSE;
+
+    // 停止定时器
+    if (krc_progress_state.timer_id > 0) {
+        if (g_source_remove(krc_progress_state.timer_id)) {
+            printf("🔄 [KRC清理] 已停止KRC渐进式播放定时器 (ID: %u)\n", krc_progress_state.timer_id);
+        } else {
+            printf("⚠️ [KRC清理] 定时器已不存在或已被移除 (ID: %u)\n", krc_progress_state.timer_id);
+        }
+        krc_progress_state.timer_id = 0;
     }
 
     // 清理KRC相关的全局状态
@@ -1689,14 +1835,17 @@ static void osd_lyrics_process_krc_line(const char *krc_line) {
     printf("🎤 [KRC处理] 提取文本: %s\n", text_content);
 
     // 显示提取的文本
-    osd_lyrics_set_text(text_content);
+    osd_lyrics_set_text_safe(text_content);
 
     g_free(text_content);
 }
 
 // KRC进度更新函数（定时器回调）
 static gboolean osd_lyrics_update_krc_progress(gpointer data) {
-    if (!krc_progress_state.is_active || !krc_progress_state.current_krc_line) {
+    // 检查全局状态和OSD对象有效性
+    if (!krc_progress_state.is_active || !krc_progress_state.current_krc_line || !osd || !osd->initialized) {
+        printf("🔄 [KRC进度] 状态无效，停止定时器\n");
+        krc_progress_state.timer_id = 0;
         return FALSE; // 停止定时器
     }
 
@@ -1862,7 +2011,7 @@ static gboolean osd_lyrics_update_krc_progress(gpointer data) {
     char *final_text = g_string_free(result_text, FALSE);
 
     // 使用Pango标记显示文本
-    osd_lyrics_set_markup_text(final_text);
+    osd_lyrics_set_markup_text_safe(final_text);
 
     g_free(final_text);
 
@@ -1895,51 +2044,66 @@ static void osd_lyrics_process_lrc_line(const char *lrc_line) {
         printf("📝 [LRC处理] 提取文本: %s\n", text_content);
 
         // 显示文本
-        osd_lyrics_set_text(text_content);
+        osd_lyrics_set_text_safe(text_content);
 
         g_free(text_content);
     } else {
         // 没有找到时间戳，直接显示原文
-        osd_lyrics_set_text(lrc_line);
+        osd_lyrics_set_text_safe(lrc_line);
     }
 }
 
 // 清理资源
 void osd_lyrics_cleanup(void) {
-    // 停止KRC渐进式播放定时器
-    if (krc_progress_state.timer_id > 0) {
-        g_source_remove(krc_progress_state.timer_id);
-        krc_progress_state.timer_id = 0;
+    printf("🧹 [清理] 开始清理OSD歌词资源\n");
+
+    // 首先标记为未初始化，防止其他线程继续访问
+    if (osd) {
+        osd->initialized = FALSE;
     }
 
-    // 清理KRC状态
-    if (krc_progress_state.current_krc_line) {
-        g_free(krc_progress_state.current_krc_line);
-        krc_progress_state.current_krc_line = NULL;
-    }
-    krc_progress_state.is_active = FALSE;
+    // 清理KRC状态（包括定时器）
+    clear_krc_state();
 
     if (osd) {
-        // 清理定时器
+        printf("🧹 [清理] 清理OSD对象资源\n");
+
+        // 清理UI定时器
         if (osd->hide_timer_id > 0) {
-            g_source_remove(osd->hide_timer_id);
+            if (g_source_remove(osd->hide_timer_id)) {
+                printf("🧹 [清理] 已停止隐藏定时器 (ID: %u)\n", osd->hide_timer_id);
+            }
             osd->hide_timer_id = 0;
         }
         if (osd->unlock_timer_id > 0) {
-            g_source_remove(osd->unlock_timer_id);
+            if (g_source_remove(osd->unlock_timer_id)) {
+                printf("🧹 [清理] 已停止解锁定时器 (ID: %u)\n", osd->unlock_timer_id);
+            }
             osd->unlock_timer_id = 0;
         }
-        
+
+        // 清理字符串资源
         if (osd->current_lyrics) {
             g_free(osd->current_lyrics);
+            osd->current_lyrics = NULL;
         }
         if (osd->sse_url) {
             g_free(osd->sse_url);
+            osd->sse_url = NULL;
         }
+
+        // 销毁GTK窗口
         if (osd->window) {
             gtk_widget_destroy(osd->window);
+            osd->window = NULL;
         }
+
+        // 释放OSD结构体
         g_free(osd);
         osd = NULL;
+
+        printf("🧹 [清理] OSD对象资源清理完成\n");
     }
+
+    printf("✅ [清理] 所有资源清理完成\n");
 }
