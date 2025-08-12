@@ -841,15 +841,24 @@ static void update_opacity(OSDLyrics *osd) {
         "  color: rgb(255, 85, 85);"
         "}"
         "button#close-button {"
-        "  background: none;"
-        "  border: none;"
+        "  background: none !important;"
+        "  background-color: transparent !important;"
+        "  background-image: none !important;"
+        "  border: none !important;"
+        "  border-radius: 0 !important;"
+        "  box-shadow: none !important;"
         "  color: rgba(100, 100, 100, 0.8);"
         "  font-weight: bold;"
         "  font-size: 16px;"
+        "  padding: 2px;"
         "}"
         "button#close-button:hover {"
         "  color: rgb(255, 85, 85);"
-        "  background: none;"
+        "  background: none !important;"
+        "  background-color: transparent !important;"
+        "  background-image: none !important;"
+        "  border-radius: 0 !important;"
+        "  box-shadow: none !important;"
         "}"
         "button#mini-btn {"
         "  background: none;"
@@ -1901,8 +1910,13 @@ static gboolean osd_lyrics_update_krc_progress(gpointer data) {
 
                 // 开启新的颜色标记
                 if (should_be_played) {
-                    // 已播放部分：红色
-                    g_string_append(result_text, "<span foreground=\"red\">");
+                    // 已播放部分：使用用户选择的颜色
+                    gchar *user_color = g_strdup_printf("#%02x%02x%02x", 
+                        (int)(osd->text_color.red * 255),
+                        (int)(osd->text_color.green * 255),
+                        (int)(osd->text_color.blue * 255));
+                    g_string_append_printf(result_text, "<span foreground=\"%s\">", user_color);
+                    g_free(user_color);
                 } else {
                     // 未播放部分：灰色
                     g_string_append(result_text, "<span foreground=\"#666666\">");
@@ -1916,7 +1930,13 @@ static gboolean osd_lyrics_update_krc_progress(gpointer data) {
                 // 如果还没有开启颜色标记，开启第一个
                 if (!color_section_open) {
                     if (in_played_section) {
-                        g_string_append(result_text, "<span foreground=\"red\">");
+                        // 已播放部分：使用用户选择的颜色
+                        gchar *user_color = g_strdup_printf("#%02x%02x%02x", 
+                            (int)(osd->text_color.red * 255),
+                            (int)(osd->text_color.green * 255),
+                            (int)(osd->text_color.blue * 255));
+                        g_string_append_printf(result_text, "<span foreground=\"%s\">", user_color);
+                        g_free(user_color);
                     } else {
                         g_string_append(result_text, "<span foreground=\"#666666\">");
                     }
@@ -1961,7 +1981,13 @@ static gboolean osd_lyrics_update_krc_progress(gpointer data) {
             // 如果还没有开启颜色标记，开启第一个
             if (!color_section_open) {
                 if (in_played_section) {
-                    g_string_append(result_text, "<span foreground=\"red\">");
+                    // 已播放部分：使用用户选择的颜色
+                    gchar *user_color = g_strdup_printf("#%02x%02x%02x", 
+                        (int)(osd->text_color.red * 255),
+                        (int)(osd->text_color.green * 255),
+                        (int)(osd->text_color.blue * 255));
+                    g_string_append_printf(result_text, "<span foreground=\"%s\">", user_color);
+                    g_free(user_color);
                 } else {
                     g_string_append(result_text, "<span foreground=\"#666666\">");
                 }
